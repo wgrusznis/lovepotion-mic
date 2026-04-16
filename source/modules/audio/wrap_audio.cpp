@@ -5,6 +5,11 @@
 
 #include <modules/filesystem/wrap_filesystem.hpp>
 
+// 3DS microphone extension — only compiled on CTR platform
+#if defined(__3DS__)
+extern int Wrap_Audio_Ext_Register(lua_State* L);
+#endif
+
 using namespace love;
 using Source = love::Source<Console::Which>;
 
@@ -211,5 +216,13 @@ int Wrap_Audio::Register(lua_State* L)
     wrappedModule.functions = functions;
     wrappedModule.types     = types;
 
-    return luax::RegisterModule(L, wrappedModule);
+    int result = luax::RegisterModule(L, wrappedModule);
+
+#if defined(__3DS__)
+    // Register love.audio.getRecordingDevices() and the RecordingDevice type.
+    // The love.audio table is on top of the stack after RegisterModule.
+    Wrap_Audio_Ext_Register(L);
+#endif
+
+    return result;
 }

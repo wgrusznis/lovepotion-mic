@@ -57,6 +57,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     source/objects/texture_ext.cpp
     source/objects/truetyperasterizer_ext.cpp
     source/objects/wrap_imagedata_ext.cpp
+    source/objects/recordingdevice_ext.cpp
+    source/modules/wrap_audio_ext.cpp
     source/runtime.cpp
     source/utilities/driver/dsp_ext.cpp
     source/utilities/driver/hid_ext.cpp

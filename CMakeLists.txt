@@ -179,7 +179,7 @@ if (NINTENDO_WIIU)
     execute_process(COMMAND patch -d ${CMAKE_CURRENT_BINARY_DIR}/luasocket/libluasocket -N -i ${PROJECT_SOURCE_DIR}/platform/cafe/libraries/luasocket.patch)
 
     find_package(Freetype REQUIRED)
-    set(APP_LIBS freetype brotlidec bz2)
+    set(APP_LIBS freetype brotlidec brotlicommon bz2)
 
     find_package(SDL2 REQUIRED)
     target_include_directories(${PROJECT_NAME} PRIVATE ${DEVKITPRO}/portlibs/wiiu/include)

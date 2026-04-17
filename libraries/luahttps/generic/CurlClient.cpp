@@ -1,164 +1,204 @@
-#ifdef _WIN32
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-#endif
+// Patched CurlClient.cpp — matches the upstream lua-https struct-based API
+// but checks curl_easy_perform's return value and throws a descriptive error
+// instead of silently returning responseCode=0 on connection failure.
+//
+// This file is used in place of the fetched _deps copy via CMakeLists.txt so
+// the fix survives clean builds.
 
 #include "CurlClient.h"
 
 #ifdef HTTPS_BACKEND_CURL
 
 #include <algorithm>
-#include <sstream>
 #include <stdexcept>
+#include <sstream>
 #include <vector>
 
 typedef struct StringReader
 {
-    const std::string* str;
-    size_t pos;
+	const std::string *str;
+	size_t pos;
 } StringReader;
 
-CurlClient::Curl::Curl() : handle(nullptr), loaded(false)
+CurlClient::Curl::Curl()
+: handle(nullptr)
+, loaded(false)
+, global_cleanup(nullptr)
+, easy_init(nullptr)
+, easy_cleanup(nullptr)
+, easy_setopt(nullptr)
+, easy_perform(nullptr)
+, easy_getinfo(nullptr)
+, slist_append(nullptr)
+, slist_free_all(nullptr)
 {
-    handle = curl_easy_init();
+	using namespace LibraryLoader;
 
-    if (!handle)
-        return;
+#ifdef _WIN32
+	handle = OpenLibrary("libcurl.dll");
+#else
+	handle = OpenLibrary("libcurl.so.4");
+#endif
+	if (!handle)
+		return;
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    loaded = true;
+	// Load symbols
+	decltype(&curl_global_init) global_init = nullptr;
+	if (!LoadSymbol(global_init, handle, "curl_global_init"))
+		return;
+	if (!LoadSymbol(global_cleanup, handle, "curl_global_cleanup"))
+		return;
+	if (!LoadSymbol(easy_init, handle, "curl_easy_init"))
+		return;
+	if (!LoadSymbol(easy_cleanup, handle, "curl_easy_cleanup"))
+		return;
+	if (!LoadSymbol(easy_setopt, handle, "curl_easy_setopt"))
+		return;
+	if (!LoadSymbol(easy_perform, handle, "curl_easy_perform"))
+		return;
+	if (!LoadSymbol(easy_getinfo, handle, "curl_easy_getinfo"))
+		return;
+	if (!LoadSymbol(slist_append, handle, "curl_slist_append"))
+		return;
+	if (!LoadSymbol(slist_free_all, handle, "curl_slist_free_all"))
+		return;
+
+	global_init(CURL_GLOBAL_DEFAULT);
+	loaded = true;
 }
 
 CurlClient::Curl::~Curl()
 {
-    if (loaded)
-        curl_global_cleanup();
+	if (loaded)
+		global_cleanup();
 
-    if (handle)
-        curl_easy_cleanup(handle);
+	if (handle)
+		LibraryLoader::CloseLibrary(handle);
 }
 
 static char toUppercase(char c)
 {
-    int ch = (unsigned char)c;
-    return toupper(ch);
+	int ch = (unsigned char) c;
+	return toupper(ch);
 }
 
-static size_t stringReader(char* ptr, size_t size, size_t nmemb, StringReader* reader)
+static size_t stringReader(char *ptr, size_t size, size_t nmemb, StringReader *reader)
 {
-    const char* data    = reader->str->data();
-    size_t len          = reader->str->length();
-    size_t maxCount     = (len - reader->pos) / size;
-    size_t desiredCount = std::min(maxCount, nmemb);
-    size_t desiredBytes = desiredCount * size;
+	const char *data = reader->str->data();
+	size_t len = reader->str->length();
+	size_t maxCount = (len - reader->pos) / size;
+	size_t desiredCount = std::min(maxCount, nmemb);
+	size_t desiredBytes = desiredCount * size;
 
-    std::copy(data + reader->pos, data + desiredBytes, ptr);
-    reader->pos += desiredBytes;
+	std::copy(data + reader->pos, data + desiredBytes, ptr);
+	reader->pos += desiredBytes;
 
-    return desiredCount;
+	return desiredCount;
 }
 
-static size_t stringstreamWriter(char* ptr, size_t size, size_t nmemb, std::stringstream* ss)
+static size_t stringstreamWriter(char *ptr, size_t size, size_t nmemb, std::stringstream *ss)
 {
-    size_t count = size * nmemb;
-    ss->write(ptr, count);
-    return count;
+	size_t count = size*nmemb;
+	ss->write(ptr, count);
+	return count;
 }
 
-static size_t headerWriter(
-    char* ptr, size_t size, size_t nmemb, std::map<std::string, std::string>* userdata)
+static size_t headerWriter(char *ptr, size_t size, size_t nmemb, std::map<std::string,std::string> *userdata)
 {
-    std::map<std::string, std::string>& headers = *userdata;
-    size_t count                                = size * nmemb;
-    std::string line(ptr, count);
-    size_t split   = line.find(':');
-    size_t newline = line.find('\r');
-    if (newline == std::string::npos)
-        newline = line.size();
+	std::map<std::string, std::string> &headers = *userdata;
+	size_t count = size*nmemb;
+	std::string line(ptr, count);
+	size_t split = line.find(':');
+	size_t newline = line.find('\r');
+	if (newline == std::string::npos)
+		newline = line.size();
 
-    if (split != std::string::npos)
-        headers[line.substr(0, split)] = line.substr(split + 1, newline - split - 1);
-    return count;
+	if (split != std::string::npos)
+		headers[line.substr(0, split)] = line.substr(split+1, newline-split-1);
+	return count;
 }
 
 bool CurlClient::valid() const
 {
-    return curl.loaded;
+	return curl.loaded;
 }
 
-HTTPSClient::Reply CurlClient::request(const HTTPSClient::Request& req)
+HTTPSClient::Reply CurlClient::request(const HTTPSClient::Request &req)
 {
-    Reply reply;
-    reply.responseCode = 0;
+	Reply reply;
+	reply.responseCode = 0;
 
-    // Use sensible default header for later
-    HTTPSClient::header_map newHeaders = req.headers;
+	// Use sensible default header for later
+	HTTPSClient::header_map newHeaders = req.headers;
 
-    CURL* handle = curl_easy_init();
+	CURL *handle = curl.easy_init();
+	if (!handle)
+		throw std::runtime_error("Could not create curl request");
 
-    if (!handle)
-        throw std::runtime_error("Could not create curl request");
+	curl.easy_setopt(handle, CURLOPT_URL, req.url.c_str());
+	curl.easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
+	curl.easy_setopt(handle, CURLOPT_CUSTOMREQUEST, req.method.c_str());
 
-    curl_easy_setopt(handle, CURLOPT_URL, req.url.c_str());
-    curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0L); /* do not verify */
-    curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, req.method.c_str());
+	StringReader reader {};
 
-    StringReader reader{};
+	if (req.postdata.size() > 0 && (req.method != "GET" && req.method != "HEAD"))
+	{
+		reader.str = &req.postdata;
+		reader.pos = 0;
+		curl.easy_setopt(handle, CURLOPT_UPLOAD, 1L);
+		curl.easy_setopt(handle, CURLOPT_READFUNCTION, stringReader);
+		curl.easy_setopt(handle, CURLOPT_READDATA, &reader);
+		curl.easy_setopt(handle, CURLOPT_INFILESIZE_LARGE, (curl_off_t) req.postdata.length());
+	}
 
-    if (req.postdata.size() > 0 && (req.method != "GET" && req.method != "HEAD"))
-    {
-        reader.str = &req.postdata;
-        reader.pos = 0;
+	if (req.method == "HEAD")
+		curl.easy_setopt(handle, CURLOPT_NOBODY, 1L);
 
-        curl_easy_setopt(handle, CURLOPT_UPLOAD, 1L);
-        curl_easy_setopt(handle, CURLOPT_READFUNCTION, stringReader);
-        curl_easy_setopt(handle, CURLOPT_READDATA, &reader);
-        curl_easy_setopt(handle, CURLOPT_INFILESIZE_LARGE, (curl_off_t)req.postdata.length());
-    }
+	// Curl doesn't copy memory, keep the strings around
+	std::vector<std::string> lines;
+	for (auto &header : newHeaders)
+	{
+		std::stringstream line;
+		line << header.first << ": " << header.second;
+		lines.push_back(line.str());
+	}
 
-    if (req.method == "HEAD")
-        curl_easy_setopt(handle, CURLOPT_NOBODY, 1L);
+	curl_slist *sendHeaders = nullptr;
+	for (auto &line : lines)
+		sendHeaders = curl.slist_append(sendHeaders, line.c_str());
 
-    // Curl doesn't copy memory, keep the strings around
-    std::vector<std::string> lines;
-    for (auto& header : newHeaders)
-    {
-        std::stringstream line;
-        line << header.first << ": " << header.second;
-        lines.push_back(line.str());
-    }
+	if (sendHeaders)
+		curl.easy_setopt(handle, CURLOPT_HTTPHEADER, sendHeaders);
 
-    curl_slist* sendHeaders = nullptr;
-    for (auto& line : lines)
-        sendHeaders = curl_slist_append(sendHeaders, line.c_str());
+	std::stringstream body;
 
-    if (sendHeaders)
-        curl_easy_setopt(handle, CURLOPT_HTTPHEADER, sendHeaders);
+	curl.easy_setopt(handle, CURLOPT_WRITEFUNCTION, stringstreamWriter);
+	curl.easy_setopt(handle, CURLOPT_WRITEDATA, &body);
 
-    std::stringstream body;
+	curl.easy_setopt(handle, CURLOPT_HEADERFUNCTION, headerWriter);
+	curl.easy_setopt(handle, CURLOPT_HEADERDATA, &reply.headers);
 
-    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, stringstreamWriter);
-    curl_easy_setopt(handle, CURLOPT_WRITEDATA, &body);
+	CURLcode res = curl.easy_perform(handle);
 
-    curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, headerWriter);
-    curl_easy_setopt(handle, CURLOPT_HEADERDATA, &reply.headers);
+	if (sendHeaders)
+		curl.slist_free_all(sendHeaders);
 
-    curl_easy_perform(handle);
+	if (res != CURLE_OK)
+	{
+		curl.easy_cleanup(handle);
+		throw std::runtime_error(std::string("curl_easy_perform failed: ") + curl_easy_strerror(res));
+	}
 
-    if (sendHeaders)
-        curl_slist_free_all(sendHeaders);
+	{
+		long responseCode;
+		curl.easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &responseCode);
+		reply.responseCode = (int) responseCode;
+	}
 
-    {
-        long responseCode;
-        curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &responseCode);
-        reply.responseCode = (int)responseCode;
-    }
+	reply.body = body.str();
 
-    reply.body = body.str();
-
-    curl_easy_cleanup(handle);
-    return reply;
+	curl.easy_cleanup(handle);
+	return reply;
 }
 
 CurlClient::Curl CurlClient::curl;

@@ -1,0 +1,28 @@
+--- a/src/generic/CurlClient.cpp
++++ b/src/generic/CurlClient.cpp
+@@ -130,6 +130,7 @@ HTTPSClient::Reply CurlClient::request(const HTTPSClient::Request &req)
+ 	curl.easy_setopt(handle, CURLOPT_URL, req.url.c_str());
+ 	curl.easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
++	curl.easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0L); /* no CA bundle on 3DS */
+ 	curl.easy_setopt(handle, CURLOPT_CUSTOMREQUEST, req.method.c_str());
+ 
+ 	StringReader reader {};
+@@ -171,11 +172,17 @@ HTTPSClient::Reply CurlClient::request(const HTTPSClient::Request &req)
+ 	curl.easy_setopt(handle, CURLOPT_HEADERFUNCTION, headerWriter);
+ 	curl.easy_setopt(handle, CURLOPT_HEADERDATA, &reply.headers);
+ 
+-	curl.easy_perform(handle);
++	CURLcode res = curl.easy_perform(handle);
+ 
+ 	if (sendHeaders)
+ 		curl.slist_free_all(sendHeaders);
+ 
++	if (res != CURLE_OK)
++	{
++		curl.easy_cleanup(handle);
++		throw std::runtime_error(std::string("curl_easy_perform failed: ") + curl_easy_strerror(res));
++	}
++
+ 	{
+ 		long responseCode;
+ 		curl.easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &responseCode);

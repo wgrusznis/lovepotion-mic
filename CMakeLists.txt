@@ -237,6 +237,11 @@ FetchContent_Declare(lua-https
 FetchContent_GetProperties(lua-https)
 if(NOT lua-https_POPULATED)
     FetchContent_Populate(lua-https)
+    # Patch CurlClient to check curl_easy_perform's return value and throw a
+    # descriptive error instead of silently returning responseCode=0 on failure.
+    execute_process(COMMAND patch -p1 -N
+        -d ${lua-https_SOURCE_DIR}
+        -i ${PROJECT_SOURCE_DIR}/platform/ctr/libraries/luahttps-curlclient.patch)
 endif()
 
 add_library(lua-https STATIC

@@ -47,6 +47,8 @@ static constexpr char nogame_lua[] = {
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+extern "C" int luaopen_tls(lua_State* L);
+
 // clang-format off
 static constexpr luaL_Reg modules[] =
 {
@@ -183,6 +185,7 @@ int love::Initialize(lua_State* L)
 
     luax::Preload(L, luaopen_luautf8, "utf8");
     luax::Preload(L, luaopen_https, "https");
+    luax::Preload(L, luaopen_tls, "tls");
 
     return 1;
 }

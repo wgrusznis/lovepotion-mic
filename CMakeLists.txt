@@ -353,6 +353,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::liblz4)
 pkg_check_modules(libcurl REQUIRED IMPORTED_TARGET libcurl)
 target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::lua51)
 
+# link mbedtls for the tls Lua module
+pkg_check_modules(mbedtls REQUIRED IMPORTED_TARGET mbedtls)
+target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::mbedtls)
+
 # link everything else
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${APP_LIBS} physfs box2d z turbojpeg png vorbisidec ogg
@@ -511,6 +515,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     source/objects/world/wrap_world.cpp
     source/utilities/base64.cpp
     source/utilities/bytes.cpp
+    source/utilities/luatls.cpp
     source/utilities/compressor/compressor.cpp
     source/utilities/compressor/types/lz4compressor.cpp
     source/utilities/compressor/types/zlibcompressor.cpp
